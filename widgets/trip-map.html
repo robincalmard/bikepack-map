@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bikepack map</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css"
+    />
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        font-family: system-ui, sans-serif;
+      }
+      #map {
+        width: 100%;
+        height: 420px;
+      }
+      #status {
+        padding: 8px 12px;
+        font-size: 13px;
+        color: #334155;
+        background: #f8fafc;
+      }
+      .maplibregl-popup-content {
+        font-size: 13px;
+        padding: 8px 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="status">Waiting for trip places…</div>
+    <div id="map"></div>
+    <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+    <script>
+      const ROLE_COLOR = {
+        start: "#16a34a",
+        finish: "#dc2626",
+        overnight: "#2563eb",
+        waypoint: "#ea580c",
+        poi: "#7c3aed",
+      };
+
+      let map;
+      let markers = [];
+      let lastPayload = "";
+
+      function payloadFromHost() {
+        const out = window.openai && window.openai.toolOutput;
+        if (out && Array.isArray(out.places)) return out;
+        return null;
+      }
+
+      function renderPlaces(data) {
+        const serialized = JSON.stringify(data || {});
+        if (serialized === lastPayload) return;
+        lastPayload = serialized;
+        const places = (data && data.places) || [];
+        const found = places.filter((p) => p.found && p.lat != null && p.lon != null);
+        const missing = places.filter((p) => !p.found).map((p) => p.name);
+        const status = document.getElementById("status");
+        status.textContent = missing.length
+          ? `Showing ${found.length} places. Not found: ${missing.join(", ")}`
+          : `Showing ${found.length} places`;
+
+        if (!map) {
+          map = new maplibregl.Map({
+            container: "map",
+            style: "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+            center: found.length ? [found[0].lon, found[0].lat] : [4.83, 43.79],
+            zoom: found.length ? 9 : 6,
+          });
+          map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
+        }
+
+        markers.forEach((m) => m.remove());
+        markers = [];
+
+        const bounds = new maplibregl.LngLatBounds();
+        found.forEach((place) => {
+          const color = ROLE_COLOR[place.role] || "#334155";
+          const el = document.createElement("div");
+          el.style.width = "14px";
+          el.style.height = "14px";
+          el.style.borderRadius = "50%";
+          el.style.background = color;
+          el.style.border = "2px solid white";
+          el.style.boxShadow = "0 0 0 1px rgba(0,0,0,0.25)";
+
+          const day = place.day != null ? ` · day ${place.day}` : "";
+          const popup = new maplibregl.Popup({ offset: 12 }).setText(
+            `${place.name} (${place.role}${day})`
+          );
+          const marker = new maplibregl.Marker({ element: el })
+            .setLngLat([place.lon, place.lat])
+            .setPopup(popup)
+            .addTo(map);
+          markers.push(marker);
+          bounds.extend([place.lon, place.lat]);
+        });
+
+        if (found.length === 1) {
+          map.flyTo({ center: [found[0].lon, found[0].lat], zoom: 11 });
+        } else if (found.length > 1) {
+          map.fitBounds(bounds, { padding: 48, maxZoom: 12 });
+        }
+      }
+
+      function boot() {
+        const initial = payloadFromHost();
+        if (initial) renderPlaces(initial);
+
+        window.addEventListener("message", (event) => {
+          if (event.source !== window.parent) return;
+          const message = event.data;
+          if (!message || message.jsonrpc !== "2.0") return;
+          if (message.method === "ui/notifications/tool-result") {
+            const params = message.params || {};
+            const structured =
+              params.structuredContent ||
+              (params.result && params.result.structuredContent);
+            if (structured) renderPlaces(structured);
+          }
+        });
+
+        setInterval(() => {
+          const next = payloadFromHost();
+          if (next) renderPlaces(next);
+        }, 1500);
+      }
+
+      boot();
+    </script>
+  </body>
+</html>
