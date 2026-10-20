@@ -54,6 +54,20 @@ async def app(scope: Scope, receive: Receive, send: Send) -> None:
             k.decode("latin-1").lower(): v.decode("latin-1")
             for k, v in scope.get("headers", [])
         }
+        # Stateless MCP: a long-lived GET /mcp SSE stream occupies Render's
+        # single free-tier worker, so ChatGPT's follow-up tools/list times out.
+        if method == "GET" and path == "/mcp":
+            response = JSONResponse(
+                {"error": "SSE stream not supported; use POST"},
+                status_code=405,
+                headers={"Allow": "POST"},
+            )
+            await response(scope, receive, send)
+            return
+        if method == "GET" and path in {"", "/"}:
+            response = JSONResponse({"ok": True, "mcp": "/mcp"})
+            await response(scope, receive, send)
+            return
         if (
             method == "POST"
             and path == "/mcp"
