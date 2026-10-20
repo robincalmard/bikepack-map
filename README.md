@@ -6,7 +6,23 @@ You describe the trip in ChatGPT. ChatGPT writes the plan, then calls this Pytho
 
 v1 is pins only (start, overnights, waypoints). Routing and elevation come later.
 
-## Setup
+## Architecture (logic vs ChatGPT wire)
+
+| Layer | Where | How you work on it |
+|---|---|---|
+| **Trip logic** | `trip/` (geocoding, later routing) | Local unit tests — no MCP, no tunnel |
+| **MCP adapter** | `server.py` / `hello_mcp/` | Thin wrappers that call `trip/` |
+| **ChatGPT connectivity** | Deployed HTTPS `/mcp` (Render) | Paste URL into ChatGPT |
+
+Local Windows + antivirus has been unreliable for the ChatGPT MCP handshake. Develop logic locally; prove the ChatGPT wire on Render.
+
+```powershell
+# Logic only (fast feedback)
+pip install -r requirements-dev.txt
+pytest tests/ -q
+```
+
+## Setup (full local MCP server)
 
 ```powershell
 cd C:\Users\calma\Dev\bikepack-map
@@ -18,19 +34,20 @@ python server.py
 
 The MCP endpoint is `http://127.0.0.1:8000/mcp`.
 
-## Deploy free (Render)
+## Deploy free (Render) — connectivity first
 
-Easiest way for ChatGPT to reach the app (no local tunnel):
+**Step A — hello probe** (`hello_mcp/`): one `hello` tool, proves ChatGPT can talk to your server.
 
 1. Push this repo to GitHub.
-2. Sign up at [https://render.com](https://render.com) (free).
-3. **New → Web Service** → connect the GitHub repo.
-4. Settings:
-   - **Runtime:** Python
-   - **Build command:** `pip install -r requirements.txt`
-   - **Start command:** `uvicorn server:app --host 0.0.0.0 --port $PORT`
-5. Create the service (Free instance).
-6. When live, your MCP URL is: `https://<your-service>.onrender.com/mcp`
+2. [render.com](https://render.com) → **New → Web Service** → this repo.
+3. Settings:
+   - **Root directory:** `hello_mcp`
+   - **Build:** `pip install -r requirements.txt`
+   - **Start:** `uvicorn main:app --host 0.0.0.0 --port $PORT`
+4. After deploy, ChatGPT MCP URL: `https://<service>.onrender.com/mcp`
+5. Ask ChatGPT to call `hello`.
+
+**Step B — full app:** same flow with root directory empty / repo root, start `uvicorn server:app --host 0.0.0.0 --port $PORT`.
 
 Free services sleep after ~15 minutes idle; the first request after that can take about a minute.
 

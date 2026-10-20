@@ -1,4 +1,14 @@
 services:
+  # ChatGPT wire test — deploy this first, connect ChatGPT to /mcp
+  - type: web
+    name: chatgpt-mcp-hello
+    runtime: python
+    plan: free
+    rootDir: hello_mcp
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+
+  # Full bikepack app (after hello connects)
   - type: web
     name: bikepack-map
     runtime: python
