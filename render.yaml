@@ -6,7 +6,8 @@ services:
     plan: free
     rootDir: hello_mcp
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    # main.py starts Granian with 2 workers (SSE + POST at once)
+    startCommand: python main.py
 
   # Full bikepack app (after hello connects)
   - type: web
