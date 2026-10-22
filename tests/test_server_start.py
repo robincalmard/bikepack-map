@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from server import _pin_for_widget, _summary
+from server import _pin_for_widget, _shell_html, _summary
 
 
 def test_pin_for_widget_adds_start_role_when_found() -> None:
@@ -22,6 +22,12 @@ def test_pin_for_widget_adds_start_role_when_found() -> None:
 def test_pin_for_widget_leaves_miss_without_role() -> None:
     pin = _pin_for_widget({"name": "pqris", "found": False})
     assert pin == {"name": "pqris", "found": False}
+
+
+def test_shell_loads_live_map_script() -> None:
+    html = _shell_html()
+    assert "https://bikepack-map.onrender.com/widget/map.js" in html
+    assert "tile.openstreetmap.org" not in html
 
 
 def test_summary_found_and_miss() -> None:
