@@ -29,6 +29,17 @@ async def health(_request: Request) -> Response:
     return JSONResponse({"ok": True, "mcp": "/mcp"})
 
 
+# Render's start command is `uvicorn main:app`. DNS-rebinding protection
+# would 421 every public hostname until that host is allowlisted.
+app = mcp.streamable_http_app(
+    json_response=True,
+    stateless_http=True,
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=False,
+    ),
+)
+
+
 if __name__ == "__main__":
     # Public hostname is not localhost. DNS-rebinding protection would 421
     # every Render request until that host is allowlisted.

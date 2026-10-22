@@ -6,7 +6,7 @@ services:
     plan: free
     rootDir: hello_mcp
     buildCommand: pip install -r requirements.txt
-    startCommand: python main.py
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
 
   # Full bikepack app (after hello connects)
   - type: web
