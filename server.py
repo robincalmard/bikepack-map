@@ -1,7 +1,8 @@
-"""ChatGPT MCP app (v1): resolve one start place and show a map pin.
+"""ChatGPT MCP app: pin a start, or a list of named stops.
 
 Uses MCP Python SDK v2 (protocol 2026-07-28) — same wire as hello_mcp —
-so ChatGPT setup/discover succeeds. Geocoding via trip.resolve_start.
+so ChatGPT setup/discover succeeds. Geocoding via trip.resolve_start and
+trip.resolve_places. Pins only: no route, GPX, or elevation.
 """
 
 from __future__ import annotations
@@ -14,16 +15,21 @@ import mcp.types as types
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
+from pydantic import BaseModel, Field
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
 
-from trip import resolve_start
+from trip import resolve_places, resolve_start
 
 INSTRUCTIONS = (
-    "Bikepacking start map (v1). Call show_start_map with one starting place "
-    "name (not coordinates). It geocodes that name and shows one pin. "
-    "It does not draw a route, GPX, or extra stops. If the tool returns an "
-    "error, say geocoding failed — do not invent a map or a cycling track."
+    "Bikepacking map. Call show_trip_map with place names (not coordinates) "
+    "to pin a trip. Each stop has a name, an optional role "
+    "(start, overnight, finish, waypoint, or another label), and an optional "
+    "day. Call show_start_map when only the starting place is known. "
+    "Neither tool draws a route, GPX, or elevation. If a tool returns an "
+    "error, say geocoding failed — do not invent a map or a cycling track. "
+    "If some places are not found, say so from the tool text; do not invent "
+    "coordinates for them."
 )
 
 WIDGET_URI = "ui://widget/trip-map-v2.html"
@@ -39,7 +45,11 @@ _WIDGET_ORIGINS = [
 ]
 
 
-def _widget_meta() -> dict[str, Any]:
+def _widget_meta(
+    *,
+    invoking: str = "Putting the start on a map",
+    invoked: str = "Start map ready",
+) -> dict[str, Any]:
     return {
         "ui": {
             "resourceUri": WIDGET_URI,
@@ -53,8 +63,8 @@ def _widget_meta() -> dict[str, Any]:
             "connect_domains": _WIDGET_ORIGINS,
             "resource_domains": _WIDGET_ORIGINS,
         },
-        "openai/toolInvocation/invoking": "Putting the start on a map",
-        "openai/toolInvocation/invoked": "Start map ready",
+        "openai/toolInvocation/invoking": invoking,
+        "openai/toolInvocation/invoked": invoked,
         "openai/widgetAccessible": True,
     }
 
@@ -73,6 +83,43 @@ def _summary(place: dict[str, Any]) -> str:
     return f"Not found: {place.get('name') or '(empty)'}."
 
 
+def _trip_summary(places: list[dict[str, Any]]) -> str:
+    mapped = [place["name"] for place in places if place.get("found")]
+    missing = [place["name"] for place in places if not place.get("found")]
+    noun = "place" if len(mapped) == 1 else "places"
+    text = f"Mapped {len(mapped)} {noun}"
+    if mapped:
+        text += ": " + ", ".join(mapped)
+    text += "."
+    if missing:
+        text += " Not found: " + ", ".join(missing) + "."
+    return text
+
+
+class TripStop(BaseModel):
+    """One named stop. Coordinates are looked up here; do not send them."""
+
+    name: str = Field(description="Place name to geocode. Not coordinates.")
+    role: str | None = Field(
+        default=None,
+        description="Optional pin role, such as start, overnight, finish, or waypoint.",
+    )
+    day: int | None = Field(
+        default=None,
+        description="Optional trip day number for this stop.",
+    )
+
+
+def _stop_dicts(places: list[Any]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for place in places:
+        if isinstance(place, BaseModel):
+            normalized.append(place.model_dump())
+        else:
+            normalized.append(dict(place))
+    return normalized
+
+
 mcp = MCPServer("bikepack-map", instructions=INSTRUCTIONS)
 
 
@@ -80,7 +127,7 @@ mcp = MCPServer("bikepack-map", instructions=INSTRUCTIONS)
     WIDGET_URI,
     name="Trip map",
     title="Trip map",
-    description="Leaflet map for a geocoded start place",
+    description="Leaflet map for geocoded trip places",
     mime_type=MIME_TYPE,
     meta=_widget_meta(),
 )
@@ -115,6 +162,44 @@ async def show_start_map(name: str) -> types.CallToolResult:
         content=[types.TextContent(type="text", text=_summary(place))],
         structuredContent={"places": [pin]},
         _meta=_widget_meta(),
+        isError=False,
+    )
+
+
+_TRIP_META = {
+    "invoking": "Putting the trip on a map",
+    "invoked": "Trip map ready",
+}
+
+
+@mcp.tool(
+    name="show_trip_map",
+    title="Show trip map",
+    description=(
+        "Geocode place names and show one pin per stop, in order. "
+        "Each stop is a name plus an optional role and day. "
+        "Does not draw a route, GPX, or elevation. Do not pass coordinates."
+    ),
+    meta=_widget_meta(**_TRIP_META),
+    annotations=types.ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        openWorldHint=True,
+    ),
+)
+async def show_trip_map(places: list[TripStop]) -> types.CallToolResult:
+    """Stops to geocode. Each item is a place name, not coordinates."""
+    stops = _stop_dicts(places)
+    try:
+        resolved = await resolve_places(stops)
+    except Exception as exc:
+        raise ToolError(
+            f"Geocoding failed for the trip ({type(exc).__name__}). Try again in a moment."
+        ) from exc
+    return types.CallToolResult(
+        content=[types.TextContent(type="text", text=_trip_summary(resolved))],
+        structuredContent={"places": resolved},
+        _meta=_widget_meta(**_TRIP_META),
         isError=False,
     )
 

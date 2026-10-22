@@ -1,7 +1,7 @@
 """Probe v1 start-map MCP with ChatGPT-style protocol 2026-07-28.
 
 Gates match hello_mcp/probe.py (what ChatGPT setup actually uses), then
-tools/call show_start_map with Paris.
+tools/call show_start_map with Paris, then show_trip_map with Paris and Lyon.
 
 Usage:
   python scripts/probe_start_mcp.py
@@ -274,8 +274,9 @@ def main() -> None:
         )
     tools = listed.get("tools") or []
     names = [t.get("name") for t in tools if isinstance(t, dict)]
-    if "show_start_map" not in names:
-        fail("tools/list", f"'show_start_map' not in {names!r}")
+    for required in ("show_start_map", "show_trip_map"):
+        if required not in names:
+            fail("tools/list", f"{required!r} not in {names!r}")
     pass_("tools/list", f"tools={names}")
 
     try:
@@ -332,7 +333,63 @@ def main() -> None:
     if "openai/outputTemplate" not in meta_out and "ui" not in meta_out:
         fail("tools/call", f"missing widget _meta: {meta_out!r}")
 
-    pass_("tools/call", text)
+    pass_("tools/call show_start_map", text)
+
+    try:
+        status, _, body = http_post(
+            mcp,
+            {
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "tools/call",
+                "params": {
+                    "name": "show_trip_map",
+                    "arguments": {
+                        "places": [
+                            {"name": "Paris", "role": "start", "day": 1},
+                            {"name": "Lyon", "role": "finish", "day": 2},
+                        ]
+                    },
+                    "_meta": meta,
+                },
+            },
+            {
+                "Mcp-Method": "tools/call",
+                "Mcp-Name": "show_trip_map",
+                **modern_headers,
+            },
+        )
+    except Exception as exc:
+        fail("tools/call show_trip_map", f"request failed: {exc}")
+    if status != 200:
+        fail("tools/call show_trip_map", f"HTTP {status}: {body[:400]!r}")
+    try:
+        msg = parse_sse_or_json(body)
+        called = (msg or {}).get("result") or {}
+        if called.get("resultType") != "complete":
+            fail(
+                "tools/call show_trip_map",
+                f"resultType={called.get('resultType')!r}; body={body[:300]!r}",
+            )
+        text = text_from_tool_result(msg or {})
+    except SystemExit:
+        raise
+    except Exception as exc:
+        fail("tools/call show_trip_map", f"{exc}; body={body[:400]!r}")
+
+    if text != "Mapped 2 places: Paris, Lyon.":
+        fail("tools/call show_trip_map", f"unexpected text: {text!r}")
+
+    structured = called.get("structuredContent") or {}
+    places = structured.get("places") or []
+    if [place.get("name") for place in places] != ["Paris", "Lyon"]:
+        fail("tools/call show_trip_map", f"places={places!r}")
+    if [place.get("role") for place in places] != ["start", "finish"]:
+        fail("tools/call show_trip_map", f"roles={places!r}")
+    if not all(place.get("found") and "lat" in place and "lon" in place for place in places):
+        fail("tools/call show_trip_map", f"missing pins: {places!r}")
+
+    pass_("tools/call show_trip_map", text)
 
     print("-" * 48)
     print("ALL PASS - safe to connect ChatGPT to this /mcp URL")

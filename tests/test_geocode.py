@@ -1,6 +1,7 @@
-"""Lower-level geocode helpers (used by resolve_start and later multi-stop).
+"""Lower-level geocode helpers (used by resolve_start and resolve_places).
 
-Prefer tests/test_resolve_start.py for the v1 product surface.
+Prefer tests/test_resolve_start.py and tests/test_resolve_places.py for the
+product surface.
 """
 
 from __future__ import annotations

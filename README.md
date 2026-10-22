@@ -15,7 +15,7 @@ v1 is pins only (start, overnights, waypoints). Routing and elevation come later
 | **Trip logic (v1)** | `trip.resolve_start` — one start name → pin-ready place | Local unit tests — no MCP, no tunnel |
 | **Geocode helper** | `trip/geocode.py` (Nominatim) | Used by `resolve_start`; later multi-stop |
 | **Hello MCP (wire first)** | `hello_mcp/` | Connectivity probe — one `hello` tool |
-| **Start-map MCP (v1)** | `server.py` — one tool `show_start_map` | Local probe, then Render, then ChatGPT |
+| **Map MCP** | `server.py` — `show_start_map`, `show_trip_map` | Local probe, then Render, then ChatGPT |
 | **ChatGPT connectivity** | Deployed HTTPS `/mcp` (Render) | Paste URL after start-map probe PASSes |
 
 Local Windows + antivirus has been unreliable for the ChatGPT MCP handshake. Develop logic locally; prove the ChatGPT wire on Render.
@@ -145,7 +145,7 @@ Only after Step 4 is green:
 
 ### Step 6 — Start-map app (v1)
 
-Only after Step 5 passes: deploy repo-root `server.py` (`uvicorn server:app`), run `python scripts/probe_start_mcp.py https://…`, then ask ChatGPT to call `show_start_map` with a place name (e.g. Paris). Same ladder — never skip the probe. Multi-stop / overnight roles come later.
+Only after Step 5 passes: deploy repo-root `server.py` (`uvicorn server:app`), run `python scripts/probe_start_mcp.py https://…`, then ask ChatGPT to call `show_start_map` with a place name (e.g. Paris) or `show_trip_map` with several named stops. Same ladder — never skip the probe. Routing and elevation come later.
 
 ---
 
@@ -164,8 +164,8 @@ Only after Step 5 passes: deploy repo-root `server.py` (`uvicorn server:app`), r
 
 | Tool | What it does |
 |---|---|
-| `show_trip_map` | Geocode names and render the map widget |
-| `geocode_places` | Same geocoding, no map (for inspection) |
+| `show_start_map` | Geocode one start name and show one pin |
+| `show_trip_map` | Geocode a list of named stops and show one pin each |
 
 ChatGPT must pass **names**, not coordinates. Nominatim looks them up.
 
