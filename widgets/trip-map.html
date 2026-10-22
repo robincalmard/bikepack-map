@@ -83,14 +83,10 @@
             center,
             found.length ? 11 : 6
           );
-          L.tileLayer(
-            "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
-            {
-              subdomains: "abcd",
-              maxZoom: 19,
-              attribution: "&copy; OpenStreetMap &copy; CARTO",
-            }
-          ).addTo(map);
+          L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+            maxZoom: 19,
+            attribution: "&copy; OpenStreetMap",
+          }).addTo(map);
         }
 
         markers.forEach((marker) => marker.remove());

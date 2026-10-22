@@ -26,7 +26,7 @@ INSTRUCTIONS = (
     "error, say geocoding failed — do not invent a map or a cycling track."
 )
 
-WIDGET_URI = "ui://widget/trip-map.html"
+WIDGET_URI = "ui://widget/trip-map-v2.html"
 MIME_TYPE = "text/html+skybridge"
 WIDGET_HTML = (Path(__file__).resolve().parent / "widgets" / "trip-map.html").read_text(
     encoding="utf8"
@@ -35,12 +35,7 @@ WIDGET_HTML = (Path(__file__).resolve().parent / "widgets" / "trip-map.html").re
 
 _WIDGET_ORIGINS = [
     "https://unpkg.com",
-    "https://basemaps.cartocdn.com",
-    "https://a.basemaps.cartocdn.com",
-    "https://b.basemaps.cartocdn.com",
-    "https://c.basemaps.cartocdn.com",
-    "https://d.basemaps.cartocdn.com",
-    "https://*.basemaps.cartocdn.com",
+    "https://tile.openstreetmap.org",
 ]
 
 
