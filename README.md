@@ -41,7 +41,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-Uses Granian when available (uvicorn on Python 3.14/Windows breaks POST framing). Default port is `8000` (`PORT` env overrides).
+`python main.py` serves MCP with the Python SDK v2. Default port is `8000` (`PORT` env overrides). Use the repo's Python 3.12 venv.
 
 In another shell:
 
@@ -63,12 +63,9 @@ python probe.py http://127.0.0.1:8000
 The probe checks, in order:
 
 1. `GET /` health
-2. `POST` `server/discover`
-3. `POST` `initialize`
-4. `POST` `notifications/initialized`
-5. `POST` `tools/list` (must include `hello`)
-6. `POST` `tools/call` `hello` → `Hello, Robin!`
-7. `GET /mcp` is HTTP 200 (SSE). A 405 means ChatGPT setup will fail.
+2. `POST` `server/discover` on protocol `2026-07-28` (must list that version and `resultType: complete`)
+3. `POST` `tools/list` on the same protocol (must include `hello` and `resultType: complete`)
+4. `POST` `tools/call` `hello` → `Hello, Robin!`
 
 **Pass:** every line prints `PASS` and exit code 0. **Fail:** fix `hello_mcp/` only; do not deploy.
 
@@ -129,7 +126,7 @@ Only after Step 5 passes: deploy repo-root `server.py` (`uvicorn server:app`), p
 - Never debug ChatGPT and server changes in the same iteration.
 - Prefer probe output over ChatGPT UI.
 - Treat free Render cold starts as expected delay, not a broken deploy.
-- ChatGPT setup needs `GET /mcp` SSE. The hello server runs two workers so that stream does not block `POST` tool calls on Render's free tier.
+- The hello server uses MCP Python SDK v2 so ChatGPT's `2026-07-28` discover and tool calls succeed.
 - On some Windows machines, HTTP responses to paths with a `/mcp` segment are
   mangled (`Transfer-Encoding: chunked` without framing). `probe.py` tolerates
   that for local checks; **use Render HTTPS for ChatGPT** (Linux framing is fine).

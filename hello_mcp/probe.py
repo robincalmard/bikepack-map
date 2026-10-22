@@ -282,27 +282,28 @@ def main() -> None:
         fail("health", f"unexpected body: {health!r}")
     pass_("health", 'GET / -> {"ok": true, "mcp": "/mcp"}')
 
+    meta = {
+        "io.modelcontextprotocol/protocolVersion": DISCOVER_VERSION,
+        "io.modelcontextprotocol/clientInfo": {
+            "name": "openai-mcp",
+            "version": "1.0.0",
+        },
+        "io.modelcontextprotocol/clientCapabilities": {},
+    }
+    modern_headers = {
+        "Mcp-Protocol-Version": DISCOVER_VERSION,
+    }
+
     try:
-        status, headers, body = http_post(
+        status, _, body = http_post(
             mcp,
             {
                 "jsonrpc": "2.0",
                 "id": "openai-mcp-discover",
                 "method": "server/discover",
-                "params": {
-                    "_meta": {
-                        "io.modelcontextprotocol/protocolVersion": DISCOVER_VERSION,
-                        "io.modelcontextprotocol/clientInfo": {
-                            "name": "openai-mcp",
-                            "version": "1.0.0",
-                        },
-                    }
-                },
+                "params": {"_meta": meta},
             },
-            {
-                "Mcp-Method": "server/discover",
-                "Mcp-Protocol-Version": DISCOVER_VERSION,
-            },
+            {"Mcp-Method": "server/discover", **modern_headers},
         )
     except Exception as exc:
         fail("discover", f"request failed: {exc}")
@@ -313,56 +314,23 @@ def main() -> None:
     except Exception as exc:
         fail("discover", f"parse: {exc}; body={body[:300]!r}")
     result = (msg or {}).get("result") or {}
-    versions = result.get("supportedVersions")
-    if not versions:
-        fail("discover", f"missing supportedVersions: {msg!r}")
-    pass_("discover", f"supportedVersions={versions}")
+    versions = result.get("supportedVersions") or []
+    if DISCOVER_VERSION not in versions:
+        fail("discover", f"{DISCOVER_VERSION} not in supportedVersions={versions!r}")
+    if result.get("resultType") != "complete":
+        fail("discover", f"resultType={result.get('resultType')!r}")
+    pass_("discover", f"supportedVersions includes {DISCOVER_VERSION}")
 
     try:
-        status, headers, body = http_post(
+        status, _, body = http_post(
             mcp,
             {
                 "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": HANDSHAKE_VERSION,
-                    "capabilities": {},
-                    "clientInfo": {"name": "openai-mcp", "version": "1.0.0"},
-                },
+                "id": 2,
+                "method": "tools/list",
+                "params": {"_meta": meta},
             },
-            {"Mcp-Protocol-Version": HANDSHAKE_VERSION},
-        )
-    except Exception as exc:
-        fail("initialize", f"request failed: {exc}")
-    if status != 200:
-        fail("initialize", f"HTTP {status}: {body[:400]!r}")
-    try:
-        msg = parse_sse_or_json(body)
-    except Exception as exc:
-        fail("initialize", f"parse: {exc}; body={body[:300]!r}")
-    if not (msg or {}).get("result"):
-        fail("initialize", f"no result: {msg!r}")
-    session = session_header(headers)
-    pass_("initialize", f"session={headers.get('mcp-session-id') or '(none)'}")
-
-    try:
-        status, _, body = http_post(
-            mcp,
-            {"jsonrpc": "2.0", "method": "notifications/initialized"},
-            {"Mcp-Protocol-Version": HANDSHAKE_VERSION, **session},
-        )
-    except Exception as exc:
-        fail("initialized", f"request failed: {exc}")
-    if status not in {200, 202, 204}:
-        fail("initialized", f"HTTP {status}: {body[:300]!r}")
-    pass_("initialized", f"HTTP {status}")
-
-    try:
-        status, _, body = http_post(
-            mcp,
-            {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
-            {"Mcp-Protocol-Version": HANDSHAKE_VERSION, **session},
+            {"Mcp-Method": "tools/list", **modern_headers},
         )
     except Exception as exc:
         fail("tools/list", f"request failed: {exc}")
@@ -372,7 +340,10 @@ def main() -> None:
         msg = parse_sse_or_json(body)
     except Exception as exc:
         fail("tools/list", f"parse: {exc}; body={body[:300]!r}")
-    tools = ((msg or {}).get("result") or {}).get("tools") or []
+    listed = (msg or {}).get("result") or {}
+    if listed.get("resultType") != "complete":
+        fail("tools/list", f"resultType={listed.get('resultType')!r}; body={body[:300]!r}")
+    tools = listed.get("tools") or []
     names = [t.get("name") for t in tools if isinstance(t, dict)]
     if "hello" not in names:
         fail("tools/list", f"'hello' not in {names!r}")
@@ -388,9 +359,10 @@ def main() -> None:
                 "params": {
                     "name": "hello",
                     "arguments": {"name": "Robin"},
+                    "_meta": meta,
                 },
             },
-            {"Mcp-Protocol-Version": HANDSHAKE_VERSION, **session},
+            {"Mcp-Method": "tools/call", "Mcp-Name": "hello", **modern_headers},
         )
     except Exception as exc:
         fail("tools/call", f"request failed: {exc}")
@@ -398,34 +370,18 @@ def main() -> None:
         fail("tools/call", f"HTTP {status}: {body[:400]!r}")
     try:
         msg = parse_sse_or_json(body)
+        called = (msg or {}).get("result") or {}
+        if called.get("resultType") != "complete":
+            fail("tools/call", f"resultType={called.get('resultType')!r}; body={body[:300]!r}")
         text = text_from_tool_result(msg or {})
+    except SystemExit:
+        raise
     except Exception as exc:
         fail("tools/call", f"{exc}; body={body[:400]!r}")
     expected = "Hello, Robin!"
     if text != expected:
         fail("tools/call", f"expected {expected!r}, got {text!r}")
     pass_("tools/call", text)
-
-    try:
-        status, sse_headers = http_status_only(
-            mcp,
-            "GET",
-            {
-                "accept": "text/event-stream",
-                "user-agent": "openai-mcp/1.0.0",
-                "mcp-protocol-version": HANDSHAKE_VERSION,
-                **{k.lower(): v for k, v in session.items()},
-            },
-            timeout_s=5,
-        )
-    except Exception as exc:
-        fail("sse", f"GET /mcp failed: {exc}")
-    if status == 405:
-        fail("sse", "GET /mcp returned 405; ChatGPT needs the SSE stream")
-    if status != 200:
-        fail("sse", f"GET /mcp HTTP {status}")
-    ctype = sse_headers.get("content-type", "")
-    pass_("sse", f"GET /mcp HTTP {status} content-type={ctype or '(none)'}")
 
     print("-" * 48)
     print("ALL PASS - safe to connect ChatGPT to this /mcp URL")
