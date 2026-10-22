@@ -12,18 +12,47 @@ v1 is pins only (start, overnights, waypoints). Routing and elevation come later
 
 | Layer | Where | How you work on it |
 |---|---|---|
-| **Trip logic** | `trip/` (geocoding, later routing) | Local unit tests — no MCP, no tunnel |
+| **Trip logic (v1)** | `trip.resolve_start` — one start name → pin-ready place | Local unit tests — no MCP, no tunnel |
+| **Geocode helper** | `trip/geocode.py` (Nominatim) | Used by `resolve_start`; later multi-stop |
 | **Hello MCP (wire first)** | `hello_mcp/` | Connectivity probe — one `hello` tool |
-| **Full MCP adapter** | `server.py` | Only after hello works in ChatGPT |
-| **ChatGPT connectivity** | Deployed HTTPS `/mcp` (Render) | Paste URL into ChatGPT after probe PASSes |
+| **Start-map MCP (v1)** | `server.py` — one tool `show_start_map` | Local probe, then Render, then ChatGPT |
+| **ChatGPT connectivity** | Deployed HTTPS `/mcp` (Render) | Paste URL after start-map probe PASSes |
 
 Local Windows + antivirus has been unreliable for the ChatGPT MCP handshake. Develop logic locally; prove the ChatGPT wire on Render.
 
 ```powershell
 # Trip logic only (fast feedback; no MCP)
 pip install -r requirements-dev.txt
-pytest tests/ -q
+pytest tests/ -q -m "not live"          # offline (mocked) — default day-to-day
+pytest tests/ -q -m live                # hits Nominatim (needs internet; pause HTTPS AV if SSL fails)
+pytest tests/ -q                        # both
 ```
+
+### Local one-pin preview (no ChatGPT)
+
+Resolves a start name, writes `widgets/preview-start.html`, opens it in your browser:
+
+```powershell
+python scripts/preview_start.py              # Paris
+python scripts/preview_start.py "Briançon"
+python scripts/preview_start.py pqris        # expect no pin
+```
+
+`widgets/trip-map.html` stays the ChatGPT widget (untouched). Preview injects a fake `window.openai.toolOutput` for local viewing. Pause Avast HTTPS shield if Nominatim SSL fails.
+
+### Local start-map MCP probe (no ChatGPT)
+
+One tool: `show_start_map` with `{ "name": "Paris" }` → text + pin `structuredContent` + widget meta.
+
+```powershell
+# Terminal 1
+python server.py
+
+# Terminal 2 (pause Avast if Nominatim SSL fails)
+python scripts/probe_start_mcp.py http://127.0.0.1:8000
+```
+
+**Pass:** every line `PASS`, including `tools/call` for Paris. Then deploy root `server.py` to Render and re-probe the public URL before ChatGPT.
 
 ---
 
@@ -114,9 +143,9 @@ Only after Step 4 is green:
 
 **Fail:** capture the ChatGPT error; re-run Step 4 immediately. If Step 4 still passes, the issue is ChatGPT config/refresh, not the server.
 
-### Step 6 — Full map app (later)
+### Step 6 — Start-map app (v1)
 
-Only after Step 5 passes: deploy repo-root `server.py` (`uvicorn server:app`), probe `tools/list` for `show_trip_map` on Render, then ask ChatGPT for a trip. Same ladder — never skip the probe.
+Only after Step 5 passes: deploy repo-root `server.py` (`uvicorn server:app`), run `python scripts/probe_start_mcp.py https://…`, then ask ChatGPT to call `show_start_map` with a place name (e.g. Paris). Same ladder — never skip the probe. Multi-stop / overnight roles come later.
 
 ---
 

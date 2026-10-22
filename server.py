@@ -1,17 +1,42 @@
-"""ChatGPT MCP app: geocode trip places and render a map widget."""
+"""ChatGPT MCP app (v1): resolve one start place and show a map pin.
+
+Uses trip.resolve_start for geocoding. Multi-stop / roles come later.
+"""
 
 from __future__ import annotations
 
+import json
 import os
-from copy import deepcopy
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
+import mcp.shared.version as mcp_version
 import mcp.types as types
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel, Field
+from starlette.requests import Request
+from starlette.responses import PlainTextResponse
+from starlette.routing import Route
+from starlette.types import Receive, Scope, Send
 
-from geocode import geocode_places
+from trip import resolve_start
+
+# ChatGPT probes with protocol 2026-07-28 via server/discover. Accept the
+# header, then advertise only handshake versions so it falls back to initialize.
+if "2026-07-28" not in mcp_version.SUPPORTED_PROTOCOL_VERSIONS:
+    mcp_version.SUPPORTED_PROTOCOL_VERSIONS = [
+        *mcp_version.SUPPORTED_PROTOCOL_VERSIONS,
+        "2026-07-28",
+    ]
+
+HANDSHAKE_VERSIONS = [
+    v for v in mcp_version.SUPPORTED_PROTOCOL_VERSIONS if v != "2026-07-28"
+]
+SERVER_INSTRUCTIONS = (
+    "Bikepacking start map (v1). Call show_start_map with a single starting "
+    "place name (not coordinates). The server geocodes it and shows one pin."
+)
 
 WIDGET_URI = "ui://widget/trip-map.html"
 MIME_TYPE = "text/html+skybridge"
@@ -19,59 +44,20 @@ WIDGET_HTML = (Path(__file__).resolve().parent / "widgets" / "trip-map.html").re
     encoding="utf8"
 )
 
-Role = Literal["start", "overnight", "waypoint", "finish", "poi"]
+
+class ShowStartInput(BaseModel):
+    name: str = Field(description="Starting place name to geocode, not coordinates.")
 
 
-class PlaceIn(BaseModel):
-    name: str = Field(description="Place name to geocode, not coordinates.")
-    role: Role = Field(
-        default="waypoint",
-        description="start, overnight, waypoint, finish, or poi.",
-    )
-    day: int | None = Field(default=None, description="Trip day number, 1-based.")
-
-
-class GeocodeInput(BaseModel):
-    places: list[PlaceIn] = Field(description="Place names to resolve to coordinates.")
-
-
-class ShowMapInput(BaseModel):
-    places: list[PlaceIn] = Field(
-        description="Start, overnights, finish, and key waypoints to pin on the map."
-    )
-
-
-PLACE_ITEM_SCHEMA: dict[str, Any] = {
+START_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "name": {
             "type": "string",
-            "description": "Place name to geocode (do not invent latitude/longitude).",
-        },
-        "role": {
-            "type": "string",
-            "enum": ["start", "overnight", "waypoint", "finish", "poi"],
-            "description": "Why this place is on the trip.",
-        },
-        "day": {
-            "type": "integer",
-            "description": "Optional 1-based day of the trip.",
-        },
-    },
-    "required": ["name"],
-    "additionalProperties": False,
-}
-
-PLACES_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "places": {
-            "type": "array",
-            "minItems": 1,
-            "items": PLACE_ITEM_SCHEMA,
+            "description": "Starting place name (do not invent latitude/longitude).",
         }
     },
-    "required": ["places"],
+    "required": ["name"],
     "additionalProperties": False,
 }
 
@@ -80,50 +66,70 @@ def _widget_meta() -> dict[str, Any]:
     return {
         "ui": {"resourceUri": WIDGET_URI},
         "openai/outputTemplate": WIDGET_URI,
-        "openai/toolInvocation/invoking": "Putting the trip on a map",
-        "openai/toolInvocation/invoked": "Trip map ready",
+        "openai/toolInvocation/invoking": "Putting the start on a map",
+        "openai/toolInvocation/invoked": "Start map ready",
         "openai/widgetAccessible": True,
     }
 
 
+def _pin_for_widget(place: dict[str, Any]) -> dict[str, Any]:
+    """Widget expects {places: [...]}; found starts get a green 'start' role."""
+    pin = dict(place)
+    if pin.get("found"):
+        pin.setdefault("role", "start")
+    return pin
+
+
+def _summary(place: dict[str, Any]) -> str:
+    if place.get("found"):
+        return f"Mapped start: {place['name']}."
+    return f"Not found: {place.get('name') or '(empty)'}."
+
+
 mcp = FastMCP(
     name="bikepack-map",
-    instructions=(
-        "Bikepacking trip map. After you propose an itinerary, call show_trip_map "
-        "with start, overnight stops, finish, and notable waypoints as place names "
-        "(not coordinates). Python geocodes the names. Call geocode_places first only "
-        "if you need to inspect coordinates before rendering."
-    ),
+    instructions=SERVER_INSTRUCTIONS,
+    host="0.0.0.0",
     stateless_http=True,
+    json_response=True,
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=False,
+    ),
 )
+
+
+async def _send_json(send: Send, payload: dict[str, Any], status: int = 200) -> None:
+    """Send JSON with an explicit Content-Length.
+
+    On Python 3.14 + some ASGI stacks, Starlette Response ends up as
+    Transfer-Encoding: chunked without chunk framing, which breaks ChatGPT.
+    """
+    raw = json.dumps(payload).encode("utf-8")
+    await send(
+        {
+            "type": "http.response.start",
+            "status": status,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(raw)).encode("ascii")),
+                (b"cache-control", b"no-store"),
+            ],
+        }
+    )
+    await send({"type": "http.response.body", "body": raw})
 
 
 @mcp._mcp_server.list_tools()
 async def _list_tools() -> list[types.Tool]:
     return [
         types.Tool(
-            name="geocode_places",
-            title="Geocode places",
+            name="show_start_map",
+            title="Show start map",
             description=(
-                "Resolve place names to latitude/longitude. Use this when you need "
-                "coordinates before mapping. Do not pass invented coordinates."
+                "Geocode a single starting place name and show one pin on a map. "
+                "Do not pass invented coordinates."
             ),
-            inputSchema=deepcopy(PLACES_SCHEMA),
-            annotations={
-                "destructiveHint": False,
-                "openWorldHint": True,
-                "readOnlyHint": True,
-            },
-        ),
-        types.Tool(
-            name="show_trip_map",
-            title="Show trip map",
-            description=(
-                "Call after proposing a bikepacking itinerary. Pass start, overnight "
-                "stops, finish, and key waypoints as names. Renders an interactive map "
-                "in the chat. Do not pass invented coordinates."
-            ),
-            inputSchema=deepcopy(PLACES_SCHEMA),
+            inputSchema=dict(START_SCHEMA),
             _meta=_widget_meta(),
             annotations={
                 "destructiveHint": False,
@@ -141,7 +147,7 @@ async def _list_resources() -> list[types.Resource]:
             name="Trip map",
             title="Trip map",
             uri=WIDGET_URI,
-            description="MapLibre widget for geocoded trip places",
+            description="MapLibre widget for a geocoded start place",
             mimeType=MIME_TYPE,
             _meta=_widget_meta(),
         )
@@ -155,7 +161,7 @@ async def _list_resource_templates() -> list[types.ResourceTemplate]:
             name="Trip map",
             title="Trip map",
             uriTemplate=WIDGET_URI,
-            description="MapLibre widget for geocoded trip places",
+            description="MapLibre widget for a geocoded start place",
             mimeType=MIME_TYPE,
             _meta=_widget_meta(),
         )
@@ -181,23 +187,11 @@ async def _handle_read_resource(req: types.ReadResourceRequest) -> types.ServerR
     )
 
 
-def _summary(resolved: list[dict[str, Any]]) -> str:
-    found = [p for p in resolved if p.get("found")]
-    missing = [p["name"] for p in resolved if not p.get("found")]
-    lines = [f"Mapped {len(found)} of {len(resolved)} places."]
-    for place in found:
-        day = f" day {place['day']}" if place.get("day") is not None else ""
-        lines.append(f"- {place['name']} ({place['role']}{day})")
-    if missing:
-        lines.append("Not found: " + ", ".join(missing))
-    return "\n".join(lines)
-
-
 async def _call_tool_request(req: types.CallToolRequest) -> types.ServerResult:
     name = req.params.name
     arguments = req.params.arguments or {}
 
-    if name not in {"geocode_places", "show_trip_map"}:
+    if name != "show_start_map":
         return types.ServerResult(
             types.CallToolResult(
                 content=[types.TextContent(type="text", text=f"Unknown tool: {name}")],
@@ -206,7 +200,7 @@ async def _call_tool_request(req: types.CallToolRequest) -> types.ServerResult:
         )
 
     try:
-        payload = ShowMapInput.model_validate(arguments)
+        payload = ShowStartInput.model_validate(arguments)
     except Exception as exc:
         return types.ServerResult(
             types.CallToolResult(
@@ -215,17 +209,10 @@ async def _call_tool_request(req: types.CallToolRequest) -> types.ServerResult:
             )
         )
 
-    resolved = await geocode_places([p.model_dump() for p in payload.places])
-    structured = {"places": resolved}
-    text = _summary(resolved)
-
-    if name == "geocode_places":
-        return types.ServerResult(
-            types.CallToolResult(
-                content=[types.TextContent(type="text", text=text)],
-                structuredContent=structured,
-            )
-        )
+    place = await resolve_start(payload.name)
+    pin = _pin_for_widget(place)
+    structured = {"places": [pin]}
+    text = _summary(place)
 
     return types.ServerResult(
         types.CallToolResult(
@@ -239,25 +226,127 @@ async def _call_tool_request(req: types.CallToolRequest) -> types.ServerResult:
 mcp._mcp_server.request_handlers[types.CallToolRequest] = _call_tool_request
 mcp._mcp_server.request_handlers[types.ReadResourceRequest] = _handle_read_resource
 
-app = mcp.streamable_http_app()
+_starlette_app = mcp.streamable_http_app()
 
-try:
-    from starlette.middleware.cors import CORSMiddleware
 
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_methods=["*"],
-        allow_headers=["*"],
-        allow_credentials=False,
-    )
-except Exception:
-    pass
+async def _health(_request: Request) -> PlainTextResponse:
+    return PlainTextResponse("bikepack-map ok")
+
+
+_starlette_app.router.routes.insert(0, Route("/", endpoint=_health, methods=["GET"]))
+
+
+async def app(scope: Scope, receive: Receive, send: Send) -> None:
+    """Outer ASGI wrapper.
+
+    Python 3.14 + Starlette on this machine emits Transfer-Encoding: chunked for
+    POST responses without chunk framing, which ChatGPT rejects. We answer
+    discover ourselves and re-emit other MCP responses with Content-Length.
+    """
+    if scope["type"] != "http":
+        await _starlette_app(scope, receive, send)
+        return
+
+    path = scope.get("path") or ""
+    method = scope.get("method") or ""
+    if method != "POST" or path.rstrip("/") != "/mcp":
+        await _starlette_app(scope, receive, send)
+        return
+
+    body = b""
+    while True:
+        message = await receive()
+        if message["type"] == "http.disconnect":
+            return
+        body += message.get("body", b"")
+        if not message.get("more_body"):
+            break
+
+    headers = {
+        k.decode("latin-1").lower(): v.decode("latin-1")
+        for k, v in scope.get("headers", [])
+    }
+    method_name = headers.get("mcp-method")
+    req_id: Any = "openai-mcp-discover"
+    try:
+        payload = json.loads(body.decode("utf-8") or "{}")
+        method_name = method_name or payload.get("method")
+        if "id" in payload:
+            req_id = payload["id"]
+    except Exception:
+        pass
+
+    sent = False
+
+    async def replay_receive() -> dict[str, Any]:
+        nonlocal sent
+        if not sent:
+            sent = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        return {"type": "http.disconnect"}
+
+    if method_name == "server/discover":
+        await _send_json(
+            send,
+            {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {
+                    "supportedVersions": HANDSHAKE_VERSIONS,
+                    "capabilities": {
+                        "tools": {"listChanged": False},
+                        "resources": {"subscribe": False, "listChanged": False},
+                        "prompts": {"listChanged": False},
+                    },
+                    "instructions": SERVER_INSTRUCTIONS,
+                    "resultType": "complete",
+                    "cacheScope": "public",
+                },
+            },
+        )
+        return
+
+    status_code = 200
+    response_headers: list[tuple[bytes, bytes]] = []
+    chunks: list[bytes] = []
+
+    async def buffer_send(message: dict[str, Any]) -> None:
+        nonlocal status_code, response_headers
+        if message["type"] == "http.response.start":
+            status_code = int(message["status"])
+            response_headers = [
+                (k, v)
+                for k, v in message.get("headers", [])
+                if k.lower() not in {b"content-length", b"transfer-encoding"}
+            ]
+            return
+        if message["type"] == "http.response.body":
+            chunks.append(message.get("body", b"") or b"")
+            if message.get("more_body"):
+                return
+            raw = b"".join(chunks)
+            response_headers.append((b"content-length", str(len(raw)).encode("ascii")))
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": status_code,
+                    "headers": response_headers,
+                }
+            )
+            await send({"type": "http.response.body", "body": raw})
+
+    await _starlette_app(scope, replay_receive, buffer_send)
 
 
 if __name__ == "__main__":
-    import uvicorn
-
     port = int(os.getenv("PORT", "8000"))
-    reload = os.getenv("RELOAD", "").lower() in {"1", "true", "yes"}
-    uvicorn.run("server:app", host="0.0.0.0", port=port, reload=reload)
+    # uvicorn on Python 3.14/Windows breaks POST body framing; granian works.
+    try:
+        from granian import Granian
+        from granian.constants import Interfaces
+
+        Granian("server:app", address="0.0.0.0", port=port, interface=Interfaces.ASGI).serve()
+    except Exception:
+        import uvicorn
+
+        uvicorn.run("server:app", host="0.0.0.0", port=port, reload=False)
