@@ -12,6 +12,7 @@ from typing import Any
 
 import mcp.types as types
 from mcp.server import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
@@ -19,8 +20,10 @@ from starlette.responses import PlainTextResponse, Response
 from trip import resolve_start
 
 INSTRUCTIONS = (
-    "Bikepacking start map (v1). Call show_start_map with a single starting "
-    "place name (not coordinates). The server geocodes it and shows one pin."
+    "Bikepacking start map (v1). Call show_start_map with one starting place "
+    "name (not coordinates). It geocodes that name and shows one pin. "
+    "It does not draw a route, GPX, or extra stops. If the tool returns an "
+    "error, say geocoding failed — do not invent a map or a cycling track."
 )
 
 WIDGET_URI = "ui://widget/trip-map.html"
@@ -73,8 +76,8 @@ def trip_map_widget() -> str:
     name="show_start_map",
     title="Show start map",
     description=(
-        "Geocode a single starting place name and show one pin on a map. "
-        "Do not pass invented coordinates."
+        "Geocode one starting place name and show one pin. "
+        "Does not draw a route or GPX. Do not pass invented coordinates."
     ),
     meta=_widget_meta(),
     annotations=types.ToolAnnotations(
@@ -85,7 +88,12 @@ def trip_map_widget() -> str:
 )
 async def show_start_map(name: str) -> types.CallToolResult:
     """Starting place name to geocode (not coordinates)."""
-    place = await resolve_start(name)
+    try:
+        place = await resolve_start(name)
+    except Exception as exc:
+        raise ToolError(
+            f"Geocoding failed for {name!r} ({type(exc).__name__}). Try again in a moment."
+        ) from exc
     pin = _pin_for_widget(place)
     return types.CallToolResult(
         content=[types.TextContent(type="text", text=_summary(place))],

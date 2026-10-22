@@ -43,16 +43,27 @@ async def geocode_name(name: str) -> dict[str, Any] | None:
         if wait > 0:
             await asyncio.sleep(wait)
 
-        async with httpx.AsyncClient(
-            timeout=20.0, headers={"User-Agent": USER_AGENT}
-        ) as client:
-            response = await client.get(
-                NOMINATIM_URL,
-                params={"q": name, "format": "json", "limit": 1},
-            )
-            response.raise_for_status()
-            _last_request_at = time.monotonic()
-            rows = response.json()
+        rows = None
+        last_error: Exception | None = None
+        for attempt in range(2):
+            try:
+                async with httpx.AsyncClient(
+                    timeout=12.0, headers={"User-Agent": USER_AGENT}
+                ) as client:
+                    response = await client.get(
+                        NOMINATIM_URL,
+                        params={"q": name, "format": "json", "limit": 1},
+                    )
+                    response.raise_for_status()
+                    _last_request_at = time.monotonic()
+                    rows = response.json()
+                    break
+            except httpx.HTTPError as exc:
+                last_error = exc
+                if attempt == 0:
+                    await asyncio.sleep(1.0)
+                    continue
+                raise last_error
 
         if not rows:
             _cache[key] = None
