@@ -28,45 +28,14 @@ INSTRUCTIONS = (
 
 WIDGET_URI = "ui://widget/trip-map-v2.html"
 MIME_TYPE = "text/html+skybridge"
-# ChatGPT caches this shell. Map behavior lives in /widget/map.js, which the
-# browser loads on each open, so later map edits do not need a new plugin.
-WIDGET_ASSET_BASE = os.environ.get(
-    "WIDGET_ASSET_BASE", "https://bikepack-map.onrender.com"
-).rstrip("/")
-MAP_JS = (
-    Path(__file__).resolve().parent / "widgets" / "map.js"
-).read_text(encoding="utf8")
-
-
-def _shell_html() -> str:
-    script = f"{WIDGET_ASSET_BASE}/widget/map.js"
-    return f"""<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Bikepack map</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <style>
-      html, body {{ margin: 0; height: 100%; font-family: system-ui, sans-serif; }}
-      #map {{ width: 100%; height: 420px; background: #e8eef2; }}
-      #status {{ padding: 8px 12px; font-size: 13px; color: #334155; background: #f8fafc; }}
-    </style>
-  </head>
-  <body>
-    <div id="status">Waiting for trip places…</div>
-    <div id="map"></div>
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="{script}"></script>
-  </body>
-</html>
-"""
+WIDGET_HTML = (Path(__file__).resolve().parent / "widgets" / "trip-map.html").read_text(
+    encoding="utf8"
+)
 
 
 _WIDGET_ORIGINS = [
     "https://unpkg.com",
     "https://tile.openstreetmap.org",
-    WIDGET_ASSET_BASE,
 ]
 
 
@@ -116,7 +85,7 @@ mcp = MCPServer("bikepack-map", instructions=INSTRUCTIONS)
     meta=_widget_meta(),
 )
 def trip_map_widget() -> str:
-    return _shell_html()
+    return WIDGET_HTML
 
 
 @mcp.tool(
@@ -153,15 +122,6 @@ async def show_start_map(name: str) -> types.CallToolResult:
 @mcp.custom_route("/", methods=["GET"])
 async def health(_request: Request) -> Response:
     return PlainTextResponse("bikepack-map ok")
-
-
-@mcp.custom_route("/widget/map.js", methods=["GET"])
-async def map_script(_request: Request) -> Response:
-    return Response(
-        MAP_JS,
-        media_type="text/javascript",
-        headers={"Cache-Control": "no-store"},
-    )
 
 
 # Render start: uvicorn server:app. DNS-rebinding protection would 421
