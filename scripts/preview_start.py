@@ -46,7 +46,7 @@ def _build_html(place: dict) -> str:
     if INJECT_MARKER in html:
         raise RuntimeError("Do not use trip-map.html as a previously injected file")
     # Inject before the widget script boots so payloadFromHost() sees data.
-    needle = '<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>'
+    needle = '<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>'
     if needle not in html:
         raise RuntimeError("Unexpected widget HTML; cannot inject preview payload")
     return html.replace(needle, inject + needle, 1)

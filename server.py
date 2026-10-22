@@ -33,10 +33,31 @@ WIDGET_HTML = (Path(__file__).resolve().parent / "widgets" / "trip-map.html").re
 )
 
 
+_WIDGET_ORIGINS = [
+    "https://unpkg.com",
+    "https://basemaps.cartocdn.com",
+    "https://a.basemaps.cartocdn.com",
+    "https://b.basemaps.cartocdn.com",
+    "https://c.basemaps.cartocdn.com",
+    "https://d.basemaps.cartocdn.com",
+    "https://*.basemaps.cartocdn.com",
+]
+
+
 def _widget_meta() -> dict[str, Any]:
     return {
-        "ui": {"resourceUri": WIDGET_URI},
+        "ui": {
+            "resourceUri": WIDGET_URI,
+            "csp": {
+                "connectDomains": _WIDGET_ORIGINS,
+                "resourceDomains": _WIDGET_ORIGINS,
+            },
+        },
         "openai/outputTemplate": WIDGET_URI,
+        "openai/widgetCSP": {
+            "connect_domains": _WIDGET_ORIGINS,
+            "resource_domains": _WIDGET_ORIGINS,
+        },
         "openai/toolInvocation/invoking": "Putting the start on a map",
         "openai/toolInvocation/invoked": "Start map ready",
         "openai/widgetAccessible": True,
