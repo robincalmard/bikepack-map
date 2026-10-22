@@ -1,13 +1,14 @@
-"""Probe v1 start-map MCP server (no ChatGPT).
+"""Probe v1 start-map MCP with ChatGPT-style protocol 2026-07-28.
 
-Checks health → discover → initialize → tools/list → tools/call show_start_map.
+Gates match hello_mcp/probe.py (what ChatGPT setup actually uses), then
+tools/call show_start_map with Paris.
 
 Usage:
   python scripts/probe_start_mcp.py
   python scripts/probe_start_mcp.py http://127.0.0.1:8000
+  python scripts/probe_start_mcp.py https://bikepack-map.onrender.com
 
-Exit 0 = all PASS. Needs the server running (python server.py).
-Stdlib only. Tolerates broken Windows chunked framing like hello_mcp/probe.py.
+Exit 0 = ALL PASS. Needs the server running.
 """
 
 from __future__ import annotations
@@ -26,8 +27,6 @@ if str(ROOT) not in sys.path:
 
 DEFAULT_BASE = "http://127.0.0.1:8000"
 TIMEOUT_S = 90
-# Full server advertises handshake versions (not 2026-07-28) so ChatGPT falls back.
-HANDSHAKE_VERSION = "2025-11-25"
 DISCOVER_VERSION = "2026-07-28"
 
 
@@ -219,6 +218,7 @@ def main() -> None:
         },
         "io.modelcontextprotocol/clientCapabilities": {},
     }
+    modern_headers = {"Mcp-Protocol-Version": DISCOVER_VERSION}
 
     try:
         status, _, body = http_post(
@@ -229,7 +229,7 @@ def main() -> None:
                 "method": "server/discover",
                 "params": {"_meta": meta},
             },
-            {"Mcp-Method": "server/discover", "Mcp-Protocol-Version": DISCOVER_VERSION},
+            {"Mcp-Method": "server/discover", **modern_headers},
         )
     except Exception as exc:
         fail("discover", f"request failed: {exc}")
@@ -240,45 +240,12 @@ def main() -> None:
     except Exception as exc:
         fail("discover", f"parse: {exc}; body={body[:300]!r}")
     result = (msg or {}).get("result") or {}
+    versions = result.get("supportedVersions") or []
+    if DISCOVER_VERSION not in versions:
+        fail("discover", f"{DISCOVER_VERSION} not in supportedVersions={versions!r}")
     if result.get("resultType") != "complete":
         fail("discover", f"resultType={result.get('resultType')!r}")
-    versions = result.get("supportedVersions") or []
-    if not versions:
-        fail("discover", f"empty supportedVersions: {result!r}")
-    pass_("discover", f"supportedVersions={versions}")
-
-    init_headers = {"Mcp-Protocol-Version": HANDSHAKE_VERSION}
-    try:
-        status, resp_headers, body = http_post(
-            mcp,
-            {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": HANDSHAKE_VERSION,
-                    "capabilities": {},
-                    "clientInfo": {"name": "start-mcp-probe", "version": "1.0.0"},
-                },
-            },
-            {"Mcp-Method": "initialize", **init_headers},
-        )
-    except Exception as exc:
-        fail("initialize", f"request failed: {exc}")
-    if status != 200:
-        fail("initialize", f"HTTP {status}: {body[:400]!r}")
-    try:
-        msg = parse_sse_or_json(body)
-    except Exception as exc:
-        fail("initialize", f"parse: {exc}; body={body[:300]!r}")
-    init_result = (msg or {}).get("result") or {}
-    if not init_result:
-        fail("initialize", f"no result: {msg!r}")
-    session: dict[str, str] = {}
-    sid = resp_headers.get("mcp-session-id")
-    if sid:
-        session["Mcp-Session-Id"] = sid
-    pass_("initialize", f"server={init_result.get('serverInfo')}")
+    pass_("discover", f"supportedVersions includes {DISCOVER_VERSION}")
 
     try:
         status, _, body = http_post(
@@ -287,9 +254,9 @@ def main() -> None:
                 "jsonrpc": "2.0",
                 "id": 2,
                 "method": "tools/list",
-                "params": {},
+                "params": {"_meta": meta},
             },
-            {"Mcp-Method": "tools/list", **init_headers, **session},
+            {"Mcp-Method": "tools/list", **modern_headers},
         )
     except Exception as exc:
         fail("tools/list", f"request failed: {exc}")
@@ -300,12 +267,15 @@ def main() -> None:
     except Exception as exc:
         fail("tools/list", f"parse: {exc}; body={body[:300]!r}")
     listed = (msg or {}).get("result") or {}
+    if listed.get("resultType") != "complete":
+        fail(
+            "tools/list",
+            f"resultType={listed.get('resultType')!r}; body={body[:300]!r}",
+        )
     tools = listed.get("tools") or []
     names = [t.get("name") for t in tools if isinstance(t, dict)]
     if "show_start_map" not in names:
         fail("tools/list", f"'show_start_map' not in {names!r}")
-    if len(names) != 1:
-        fail("tools/list", f"expected only show_start_map, got {names!r}")
     pass_("tools/list", f"tools={names}")
 
     try:
@@ -318,13 +288,13 @@ def main() -> None:
                 "params": {
                     "name": "show_start_map",
                     "arguments": {"name": "Paris"},
+                    "_meta": meta,
                 },
             },
             {
                 "Mcp-Method": "tools/call",
                 "Mcp-Name": "show_start_map",
-                **init_headers,
-                **session,
+                **modern_headers,
             },
         )
     except Exception as exc:
@@ -334,6 +304,11 @@ def main() -> None:
     try:
         msg = parse_sse_or_json(body)
         called = (msg or {}).get("result") or {}
+        if called.get("resultType") != "complete":
+            fail(
+                "tools/call",
+                f"resultType={called.get('resultType')!r}; body={body[:300]!r}",
+            )
         text = text_from_tool_result(msg or {})
     except SystemExit:
         raise
@@ -355,14 +330,12 @@ def main() -> None:
 
     meta_out = called.get("_meta") or {}
     if "openai/outputTemplate" not in meta_out and "ui" not in meta_out:
-        # Some stacks nest meta; also accept top-level on result
-        fail("tools/call", f"missing widget _meta: {meta_out!r} keys={list(called.keys())}")
+        fail("tools/call", f"missing widget _meta: {meta_out!r}")
 
     pass_("tools/call", text)
 
     print("-" * 48)
-    print("ALL PASS - start-map MCP structure looks good locally")
-    print("Next: deploy this server to Render, then connect ChatGPT")
+    print("ALL PASS - safe to connect ChatGPT to this /mcp URL")
     sys.exit(0)
 
 

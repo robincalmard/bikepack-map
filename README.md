@@ -155,7 +155,7 @@ Only after Step 5 passes: deploy repo-root `server.py` (`uvicorn server:app`), r
 - Never debug ChatGPT and server changes in the same iteration.
 - Prefer probe output over ChatGPT UI.
 - Treat free Render cold starts as expected delay, not a broken deploy.
-- The hello server uses MCP Python SDK v2 so ChatGPT's `2026-07-28` discover and tool calls succeed.
+- Both `hello_mcp` and root `server.py` use MCP Python SDK v2 so ChatGPT's `2026-07-28` discover and tool calls succeed. Our older probe used `initialize` only — that can PASS while ChatGPT setup still FAILS.
 - On some Windows machines, HTTP responses to paths with a `/mcp` segment are
   mangled (`Transfer-Encoding: chunked` without framing). `probe.py` tolerates
   that for local checks; **use Render HTTPS for ChatGPT** (Linux framing is fine).
