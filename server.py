@@ -32,7 +32,7 @@ INSTRUCTIONS = (
     "coordinates for them."
 )
 
-WIDGET_URI = "ui://widget/trip-map-v2.html"
+WIDGET_URI = "ui://widget/trip-map-v3.html"
 MIME_TYPE = "text/html+skybridge"
 WIDGET_HTML = (Path(__file__).resolve().parent / "widgets" / "trip-map.html").read_text(
     encoding="utf8"
@@ -70,7 +70,7 @@ def _widget_meta(
 
 
 def _pin_for_widget(place: dict[str, Any]) -> dict[str, Any]:
-    """Widget expects {places: [...]}; found starts get a green 'start' role."""
+    """Widget expects {places: [...]}; found starts get a 'start' role."""
     pin = dict(place)
     if pin.get("found"):
         pin.setdefault("role", "start")

@@ -9,8 +9,11 @@ from server import WIDGET_HTML, show_trip_map
 
 
 def test_widget_html_fits_several_pins() -> None:
-    assert 'overnight: "#2563eb"' in WIDGET_HTML
-    assert 'finish: "#dc2626"' in WIDGET_HTML
+    assert "dayColor" in WIDGET_HTML
+    assert "iconSvg" in WIDGET_HTML
+    for role in ("start", "overnight", "finish", "waypoint", "poi"):
+        assert role in WIDGET_HTML
+    assert 'overnight: "#2563eb"' not in WIDGET_HTML
     assert "fitBounds" in WIDGET_HTML
 
 

@@ -31,7 +31,7 @@ INJECT_MARKER = "<!-- preview-start: injected payload -->"
 
 
 def _build_html(place: dict) -> str:
-    """Widget expects {places: [...]}; pin-ready start gets role for color."""
+    """Widget expects {places: [...]}; pin-ready start gets a start role."""
     pin = dict(place)
     if pin.get("found"):
         pin.setdefault("role", "start")
