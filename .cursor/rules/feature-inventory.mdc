@@ -1,0 +1,29 @@
+---
+description: Keep FEATURES.md updated when adding or changing product features
+alwaysApply: true
+---
+
+# Feature inventory
+
+When you implement, materially change, or remove a **user-facing or product capability**, update [`FEATURES.md`](../../FEATURES.md) in the **same change**.
+
+Do this for:
+
+- New MCP tools or tool arguments
+- Trip-logic behavior (geocode, continuity, later fact-checking, routing, …)
+- Widget / map UI behavior
+- Integration or validation paths that change how the product is proven
+
+Skip for:
+
+- Pure refactors with no behavior change
+- Test-only or comment-only edits
+- Dependency bumps that do not change product behavior
+
+Each feature entry must include: **name**, **expected behavior**, **category**, **status**, **where it lives**, **out of scope**, **how to verify**.
+
+Use an existing category when it fits (`trip logic`, `fact checking`, `MCP tool`, `UI`, `integration`, `validation`). Add a short new category only when none fit.
+
+Set **status** honestly (`shipped`, `local only`, `planned`). After commit/push of previously local work, flip status to `shipped`.
+
+Before finishing a feature task, confirm `FEATURES.md` reflects the new behavior — including **out of scope** so later work (e.g. rider fact-checking vs wrong-place hold) stays distinct.

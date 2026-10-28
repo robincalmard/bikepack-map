@@ -26,6 +26,16 @@
         color: #334155;
         background: #f8fafc;
       }
+      #status.hold {
+        color: #9a3412;
+        background: #fff7ed;
+        border-bottom: 1px solid #fdba74;
+      }
+      #status.repair {
+        color: #166534;
+        background: #f0fdf4;
+        border-bottom: 1px solid #86efac;
+      }
       #legend {
         display: flex;
         flex-wrap: wrap;
@@ -296,12 +306,40 @@
         if (serialized === lastPayload) return;
         lastPayload = serialized;
         const places = (data && data.places) || [];
-        const found = places.filter((p) => p.found && p.lat != null && p.lon != null);
+        const continuity = (data && data.continuity) || {};
+        const found = places.filter(
+          (p) => p.found && !p.needs_confirmation && p.lat != null && p.lon != null
+        );
+        const heldPlaces = places.filter((p) => p.needs_confirmation);
+        const held = heldPlaces.map((p) => p.name);
         const missing = places.filter((p) => !p.found).map((p) => p.name);
+        const accepted =
+          continuity.accepted_confirmed ||
+          places
+            .filter((p) => p.confirmed && p.found && !p.needs_confirmation)
+            .map((p) => p.name);
         const status = document.getElementById("status");
-        status.textContent = missing.length
-          ? `Showing ${found.length} places. Not found: ${missing.join(", ")}`
-          : `Showing ${found.length} places`;
+        status.classList.remove("hold", "repair");
+        let statusText = `Showing ${found.length} places`;
+        if (heldPlaces.length) {
+          status.classList.add("hold");
+          const detail = heldPlaces
+            .map((p) => {
+              const shown = p.display_name || p.name;
+              return shown === p.name ? p.name : `${p.name} → ${shown}`;
+            })
+            .join("; ");
+          statusText =
+            `Continuity hold — off the map until confirmed: ${detail}. ` +
+            statusText;
+        } else if (accepted.length) {
+          status.classList.add("repair");
+          statusText =
+            `Continuity repair — kept after confirmation: ${accepted.join(", ")}. ` +
+            statusText;
+        }
+        if (missing.length) statusText += `. Not found: ${missing.join(", ")}`;
+        status.textContent = statusText;
 
         if (!map) {
           const center = found.length

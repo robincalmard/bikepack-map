@@ -178,6 +178,46 @@ async def test_geocode_error_fails_the_whole_resolve(
         )
 
 
+@pytest.mark.asyncio
+async def test_off_chain_stop_is_held_and_confirmed_stop_is_kept(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clear_cache()
+    coords = {
+        "Gap": (45.0, 6.0),
+        "Orange": (48.5, 6.2),
+        "Avignon": (45.0, 6.5),
+    }
+
+    async def fake_name(name: str):
+        lat, lon = coords[name]
+        return {"lat": lat, "lon": lon, "display_name": f"{name}, France"}
+
+    monkeypatch.setattr("trip.geocode.geocode_name", fake_name)
+    places = await resolve_places(
+        [
+            {"name": "Gap", "role": "start", "day": 1},
+            {"name": "Orange", "role": "overnight", "day": 2},
+            {"name": "Avignon", "role": "finish", "day": 3},
+        ]
+    )
+    assert places[1]["needs_confirmation"] is True
+    assert places[1]["name"] == "Orange"
+    assert "needs_confirmation" not in places[0]
+    assert "needs_confirmation" not in places[2]
+
+    accepted = await resolve_places(
+        [
+            {"name": "Gap", "role": "start", "day": 1},
+            {"name": "Orange", "role": "overnight", "day": 2, "confirmed": True},
+            {"name": "Avignon", "role": "finish", "day": 3},
+        ]
+    )
+    assert accepted[1]["confirmed"] is True
+    assert "needs_confirmation" not in accepted[1]
+    assert accepted[1]["lat"] == 48.5
+
+
 # --- Live --------------------------------------------------------------------
 
 

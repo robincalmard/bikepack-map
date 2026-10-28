@@ -89,6 +89,8 @@ async def geocode_places(places: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "role": place.get("role") or "waypoint",
             "day": place.get("day"),
         }
+        if place.get("confirmed") is True:
+            item["confirmed"] = True
         if hit:
             item.update(hit)
             item["found"] = True

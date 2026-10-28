@@ -20,6 +20,7 @@ from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
 
 from trip import resolve_places, resolve_start
+from trip.continuity import confirmation_text
 
 INSTRUCTIONS = (
     "Bikepacking map. Call show_trip_map with place names (not coordinates) "
@@ -29,10 +30,17 @@ INSTRUCTIONS = (
     "Neither tool draws a route, GPX, or elevation. If a tool returns an "
     "error, say geocoding failed — do not invent a map or a cycling track. "
     "If some places are not found, say so from the tool text; do not invent "
-    "coordinates for them."
+    "coordinates for them. "
+    "show_trip_map holds a stop off the map when that geocode lands off the "
+    "chain of the neighbouring stops: the name likely resolved to the wrong "
+    "place. When the tool text asks you to confirm a stop, call show_trip_map "
+    "again with a clearer name, or set confirmed true on that stop if the "
+    "geocoded place is the one you meant. Do not treat that check as a verdict "
+    "on whether a day is too long for the rider. Do not set confirmed on a "
+    "first call, and do not set it on a stop that was not found."
 )
 
-WIDGET_URI = "ui://widget/trip-map-v3.html"
+WIDGET_URI = "ui://widget/trip-map-v5.html"
 MIME_TYPE = "text/html+skybridge"
 WIDGET_HTML = (Path(__file__).resolve().parent / "widgets" / "trip-map.html").read_text(
     encoding="utf8"
@@ -83,17 +91,90 @@ def _summary(place: dict[str, Any]) -> str:
     return f"Not found: {place.get('name') or '(empty)'}."
 
 
+def _continuity_report(places: list[dict[str, Any]]) -> dict[str, Any]:
+    """Visible repair-loop signal for ChatGPT tool UI and the widget."""
+    held = [
+        {
+            "name": place.get("name") or "",
+            "display_name": place.get("display_name") or place.get("name") or "",
+            "nearby": place.get("nearby") or [],
+            "chain_km": place.get("chain_km"),
+        }
+        for place in places
+        if place.get("needs_confirmation")
+    ]
+    accepted_confirmed = [
+        place.get("name") or ""
+        for place in places
+        if place.get("confirmed") is True
+        and place.get("found")
+        and not place.get("needs_confirmation")
+    ]
+    if held:
+        status = "needs_confirmation"
+    elif accepted_confirmed:
+        status = "accepted_confirmed"
+    else:
+        status = "ok"
+    return {
+        "status": status,
+        "held": held,
+        "accepted_confirmed": accepted_confirmed,
+    }
+
+
 def _trip_summary(places: list[dict[str, Any]]) -> str:
-    mapped = [place["name"] for place in places if place.get("found")]
+    mapped = [
+        place["name"]
+        for place in places
+        if place.get("found") and not place.get("needs_confirmation")
+    ]
     missing = [place["name"] for place in places if not place.get("found")]
+    held = [place for place in places if place.get("needs_confirmation")]
+    accepted = [
+        place["name"]
+        for place in places
+        if place.get("confirmed") is True
+        and place.get("found")
+        and not place.get("needs_confirmation")
+    ]
+    parts: list[str] = []
+    if held:
+        parts.append("Continuity hold.")
+    elif accepted:
+        noun = "place" if len(accepted) == 1 else "places"
+        parts.append(
+            f"Continuity repair: kept {len(accepted)} {noun} after confirmation "
+            f"({', '.join(accepted)})."
+        )
     noun = "place" if len(mapped) == 1 else "places"
-    text = f"Mapped {len(mapped)} {noun}"
+    mapped_text = f"Mapped {len(mapped)} {noun}"
     if mapped:
-        text += ": " + ", ".join(mapped)
-    text += "."
+        mapped_text += ": " + ", ".join(mapped)
+    mapped_text += "."
+    parts.append(mapped_text)
     if missing:
-        text += " Not found: " + ", ".join(missing) + "."
-    return text
+        parts.append("Not found: " + ", ".join(missing) + ".")
+    if held:
+        parts.append(" ".join(confirmation_text(place) for place in held))
+    return " ".join(parts)
+
+
+def _trip_meta_for(places: list[dict[str, Any]]) -> dict[str, Any]:
+    report = _continuity_report(places)
+    if report["status"] == "needs_confirmation":
+        n = len(report["held"])
+        return _widget_meta(
+            invoking="Checking trip continuity",
+            invoked=f"Continuity hold: {n} stop{'s' if n != 1 else ''} need confirmation",
+        )
+    if report["status"] == "accepted_confirmed":
+        n = len(report["accepted_confirmed"])
+        return _widget_meta(
+            invoking="Putting the trip on a map",
+            invoked=f"Trip map ready ({n} confirmed)",
+        )
+    return _widget_meta(**_TRIP_META)
 
 
 class TripStop(BaseModel):
@@ -107,6 +188,14 @@ class TripStop(BaseModel):
     day: int | None = Field(
         default=None,
         description="Optional trip day number for this stop.",
+    )
+    confirmed: bool = Field(
+        default=False,
+        description=(
+            "Set true only when a previous result asked you to confirm this stop "
+            "and the geocoded place is the one you meant. Leave false on a first "
+            "call. If the wording was ambiguous, send a clearer name instead."
+        ),
     )
 
 
@@ -178,6 +267,9 @@ _TRIP_META = {
     description=(
         "Geocode place names and show one pin per stop, in order. "
         "Each stop is a name plus an optional role and day. "
+        "A stop that geocodes off the chain of its neighbours is held off the "
+        "map. Call again with a clearer name, or with confirmed true if that "
+        "geocoded place is the one you meant. "
         "Does not draw a route, GPX, or elevation. Do not pass coordinates."
     ),
     meta=_widget_meta(**_TRIP_META),
@@ -196,10 +288,11 @@ async def show_trip_map(places: list[TripStop]) -> types.CallToolResult:
         raise ToolError(
             f"Geocoding failed for the trip ({type(exc).__name__}). Try again in a moment."
         ) from exc
+    continuity = _continuity_report(resolved)
     return types.CallToolResult(
         content=[types.TextContent(type="text", text=_trip_summary(resolved))],
-        structuredContent={"places": resolved},
-        _meta=_widget_meta(**_TRIP_META),
+        structuredContent={"places": resolved, "continuity": continuity},
+        _meta=_trip_meta_for(resolved),
         isError=False,
     )
 
