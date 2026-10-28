@@ -1,10 +1,10 @@
 # Feature inventory
 
-Living list of product capabilities. When you add or change a feature, update this file in the same change.
+Living list of product capabilities. When you add or change a feature, update this file in the same change. Ideas that are not built yet live under **Future development** (status `planned`); move an entry into the main list when it ships.
 
 Each entry has: **name**, **expected behavior**, **category**, **status**, **where it lives**, **out of scope**, **how to verify**.
 
-Categories used so far: `trip logic`, `fact checking`, `MCP tool`, `UI`, `integration`, `validation`.
+Categories used so far: `trip logic`, `fact checking`, `MCP tool`, `UI`, `integration`, `validation`, `ops`.
 
 ---
 
@@ -96,3 +96,53 @@ Categories used so far: `trip logic`, `fact checking`, `MCP tool`, `UI`, `integr
 | **Where it lives** | `hello_mcp/probe.py`, `scripts/probe_start_mcp.py`, `render.yaml`, `tests/test_render_config.py` |
 | **Out of scope** | Local Windows tunnels as the ChatGPT path |
 | **How to verify** | Probe the Render URL after deploy; `pytest tests/test_render_config.py -q` |
+
+---
+
+## Future development
+
+Backlog only. Not shipped. Same fields as above; **where it lives** / **how to verify** may be tentative until implementation.
+
+### Internal continuity observability
+
+| | |
+|---|---|
+| **Expected behavior** | When a continuity hold or confirmed repair runs, record it for the operator without requiring ChatGPT UI. Start with structured server logs (viewable on Render). Later: hide hold/repair banners from end users (keep a debug flag if useful), add a deploy probe that asserts an ambiguous middle stop is held, and optionally persist events if logs are not enough. |
+| **Category** | ops, validation |
+| **Status** | planned |
+| **Where it lives** | TBD — likely `server.py` logging; later probe script and optional store |
+| **Out of scope** | Showing repair-loop chrome to end riders as the primary signal; full product analytics |
+| **How to verify** | TBD — Render logs contain hold/repair events; probe fails if Gap→Orange→Avignon no longer holds |
+
+### Country- or region-biased geocoding
+
+| | |
+|---|---|
+| **Expected behavior** | Optional country/region on the trip so Nominatim prefers hits in that area (reduces wrong-country homonyms; same-country cases like Orange still need continuity). |
+| **Category** | trip logic, integration |
+| **Status** | planned |
+| **Where it lives** | TBD — `trip/geocode.py`, tool arguments |
+| **Out of scope** | Replacing the continuity hold for ambiguous names in the same country |
+| **How to verify** | TBD |
+
+### Rider itinerary fact-checking
+
+| | |
+|---|---|
+| **Expected behavior** | A later loop that judges whether an *intended* plan fits rider criteria (distance per day, terrain, etc.). Distinct from continuity, which only catches a name that geocoded to the wrong place. |
+| **Category** | fact checking |
+| **Status** | planned |
+| **Where it lives** | TBD |
+| **Out of scope** | Holding pins for wrong geocodes (already covered by continuity) |
+| **How to verify** | TBD |
+
+### Bike routing between pins
+
+| | |
+|---|---|
+| **Expected behavior** | After pins resolve, draw a bike route between consecutive found stops and optionally report distance in the tool text. |
+| **Category** | trip logic, UI, integration |
+| **Status** | planned |
+| **Where it lives** | TBD — router client + `widgets/trip-map.html` polyline |
+| **Out of scope** | Elevation profiles and GPX export (separate follow-ons) |
+| **How to verify** | TBD |

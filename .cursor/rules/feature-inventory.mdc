@@ -26,4 +26,6 @@ Use an existing category when it fits (`trip logic`, `fact checking`, `MCP tool`
 
 Set **status** honestly (`shipped`, `local only`, `planned`). After commit/push of previously local work, flip status to `shipped`.
 
+**Future development:** ideas not yet built go under the **Future development** section with status `planned`. When one of those ships, move it into the main feature list (status `shipped`) and fill in real **where it lives** / **how to verify**. When a design discussion agrees on later work (e.g. ops logging, routing), add a planned entry there in the same change if it is not already listed.
+
 Before finishing a feature task, confirm `FEATURES.md` reflects the new behavior — including **out of scope** so later work (e.g. rider fact-checking vs wrong-place hold) stays distinct.
